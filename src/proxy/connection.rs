@@ -10,7 +10,11 @@ use std::net::TcpStream;
 
 pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let mut request = crate::http::read(&mut client)?;
-    let hooks = HookRunner::new(config.on_request.clone().into_iter().map(HookSpec::into_hook).collect());
+    let log_path = config
+        .session_id
+        .as_ref()
+        .map(|id| session_log_path(id));
+    let hooks = HookRunner::with_log(config.on_request.clone().into_iter().map(HookSpec::into_hook).collect(), log_path.clone());
     hooks.request(&mut request);
     let filters = FilterSet::from_specs(&config.filters)?;
     if !filters.allows_request(
@@ -55,13 +59,13 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         }
         bytes.extend_from_slice(&chunk[..count]);
     }
-    let response_hooks = HookRunner::new(config.on_response.clone().into_iter().map(HookSpec::into_hook).collect());
+    let response_hooks = HookRunner::with_log(config.on_response.clone().into_iter().map(HookSpec::into_hook).collect(), log_path.clone());
     let response = parse(&bytes)?;
     let mut response = response;
     response_hooks.response(&mut response, "request-id");
     let response_wire = encode(&response);
     client.write_all(&response_wire)?;
-    let event_hooks = HookRunner::new(config.on_event.clone().into_iter().map(HookSpec::into_hook).collect());
+    let event_hooks = HookRunner::with_log(config.on_event.clone().into_iter().map(HookSpec::into_hook).collect(), log_path);
     if filters.allows_event(&request.method, &request.host, &request.path, response.status) {
         let mut event = json!({
             "type": "response",
@@ -91,6 +95,16 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         );
     }
     Ok(())
+}
+
+fn session_log_path(id: &str) -> std::path::PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config")))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("tap/sessions")
+        .join(id)
+        .join("tap.log")
 }
 
 fn persist_event(config: &Config, event: &Value) -> io::Result<()> {

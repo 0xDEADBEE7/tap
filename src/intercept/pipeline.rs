@@ -2,6 +2,8 @@ use crate::http::{Request, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Write};
+use std::fs::OpenOptions;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -59,11 +61,16 @@ pub enum Mode {
 
 pub struct HookRunner {
     hooks: Vec<Hook>,
+    log_path: Option<PathBuf>,
 }
 
 impl HookRunner {
     pub fn new(hooks: Vec<Hook>) -> Self {
-        Self { hooks }
+        Self { hooks, log_path: None }
+    }
+
+    pub fn with_log(hooks: Vec<Hook>, log_path: Option<PathBuf>) -> Self {
+        Self { hooks, log_path }
     }
 
     pub fn request(&self, request: &mut Request) {
@@ -96,12 +103,20 @@ impl HookRunner {
             }
         }
         for hook in self.hooks.iter().filter(|hook| hook.mode == Mode::Async) {
-            spawn_async(hook, value);
+            spawn_async(hook, value, self.log_path.clone());
+        }
+    }
+
+    fn log_error(&self, hook: &Hook, error: &io::Error) {
+        let Some(path) = &self.log_path else { return };
+        let command = hook.command.join(" ");
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "hook [{command}] failed: {error}");
         }
     }
 }
 
-fn spawn_async(hook: &Hook, value: &Value) {
+fn spawn_async(hook: &Hook, value: &Value, log_path: Option<PathBuf>) {
     let Some(program) = hook.command.first() else {
         return;
     };
@@ -116,6 +131,17 @@ fn spawn_async(hook: &Hook, value: &Value) {
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(serde_json::to_string(value).unwrap_or_default().as_bytes());
     }
+    std::thread::spawn(move || {
+        if let Ok(status) = child.wait() {
+            if !status.success() {
+                if let Some(path) = log_path {
+                    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+                        let _ = writeln!(file, "async hook failed: {status}");
+                    }
+                }
+            }
+        }
+    });
 }
 
 fn run(hook: &Hook, value: &Value) -> io::Result<Value> {
