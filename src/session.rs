@@ -65,10 +65,11 @@ pub fn run(id: String) -> io::Result<()> {
     let result = crate::proxy::listener::run(Config {
         listen: format!("127.0.0.1:{}", metadata.port),
         filters: metadata.filters,
-        hooks: metadata.hooks.on_request.into_iter()
-            .chain(metadata.hooks.on_response)
-            .chain(metadata.hooks.on_event)
-            .collect(),
+        on_request: metadata.hooks.on_request,
+        on_response: metadata.hooks.on_response,
+        on_event: metadata.hooks.on_event,
+        session_id: Some(id.clone()),
+        events_path: Some(session_dir(&id).join("events.jsonl")),
         json: false,
     });
     let _ = write_metadata(&id, "stopped", &metadata.port);

@@ -8,7 +8,7 @@ use std::net::TcpStream;
 
 pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let mut request = crate::http::read(&mut client)?;
-    let hooks = HookRunner::new(config.hooks.clone().into_iter().map(HookSpec::into_hook).collect());
+    let hooks = HookRunner::new(config.on_request.clone().into_iter().map(HookSpec::into_hook).collect());
     hooks.request(&mut request);
     let filters = FilterSet::from_specs(&config.filters)?;
     if !filters.allows_request(
@@ -53,9 +53,10 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         }
         bytes.extend_from_slice(&chunk[..count]);
     }
+    let response_hooks = HookRunner::new(config.on_response.clone().into_iter().map(HookSpec::into_hook).collect());
     let response = parse(&bytes)?;
     let mut response = response;
-    hooks.response(&mut response, "request-id");
+    response_hooks.response(&mut response, "request-id");
     let response_wire = encode(&response);
     client.write_all(&response_wire)?;
     if filters.allows_response(response.status) {
