@@ -4,19 +4,12 @@ Traffic Access Proxy for inspecting and transforming HTTP traffic from the shell
 
 ## Quickstart
 
-Build the binary:
-
 ```bash
 make build
-```
-
-Start TAP on the default address, `127.0.0.1:8080`:
-
-```bash
 ./bin/tap proxy
 ```
 
-Use TAP as an explicit HTTP or HTTPS proxy:
+Use TAP as an explicit proxy:
 
 ```bash
 HTTP_PROXY=http://127.0.0.1:8080 \
@@ -24,39 +17,29 @@ HTTPS_PROXY=http://127.0.0.1:8080 \
 curl https://example.com/
 ```
 
-TAP supports HTTP requests and HTTPS `CONNECT` tunneling. HTTPS MITM interception requires a trusted TAP CA; initialize one with:
+HTTPS `CONNECT` is currently tunneled. Certificate commands exist for the planned MITM implementation.
+
+## Filtering
+
+Filters are regular expressions. A single `--filter` uses comma-separated AND conditions; repeated options are ORed:
 
 ```bash
-./bin/tap cert init
-./bin/tap cert path
+./bin/tap proxy --filter 'method=^GET$,host=^api\\.example\\.com$,path=^/api/'
+./bin/tap proxy --filter 'header:^x-tenant$=^acme$' --filter 'status=^5'
 ```
 
-Install the printed `ca.crt` only in the application or test environment that should trust TAP. TAP never changes system trust stores automatically.
+Supported fields are `method`, `scheme`, `host`, `port`, `path`, and `status`. Header keys are matched case-insensitively. `--host` and `--match` remain compatibility aliases for host and path filters.
 
-## Useful options
+## Hooks
 
-```bash
-./bin/tap proxy --listen 127.0.0.1:9000
-./bin/tap proxy --host api.example.com
-./bin/tap proxy --match '/api/*'
-./bin/tap proxy --json
-```
+The hook execution foundation accepts JSON on stdin and uses an argument array rather than a shell command. Synchronous hooks can return a replacement JSON object; invalid results preserve the original object. Asynchronous hooks observe the value and do not transform it. Session configuration and event persistence are still being integrated.
 
-### Process management
-
-List running TAP proxies and their listening ports:
+## Process management
 
 ```bash
 ./bin/tap ps
-```
-
-Stop one by PID:
-
-```bash
 ./bin/tap kill PID
 ```
-
-List and kill now query live process arguments with `ps`; no `.tap/running` registry is written. A process only matches when its command is exactly an executable named `tap` followed by `proxy`, so unrelated processes are excluded.
 
 - [MVP specification](mvp.md)
 - [UX patterns](guide/ux-patterns.md)
