@@ -98,11 +98,26 @@ fn run(hook: &Hook, value: &Value) -> io::Result<Value> {
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(serde_json::to_string(value)?.as_bytes())?;
     }
-    let output = child.wait_with_output()?;
+    let output = wait_for_output(child, hook.timeout)?;
     if !output.status.success() {
         return Err(invalid("hook exited unsuccessfully"));
     }
     serde_json::from_slice(&output.stdout).map_err(|_| invalid("hook stdout was not JSON"))
+}
+
+fn wait_for_output(mut child: std::process::Child, timeout: Duration) -> io::Result<std::process::Output> {
+    let started = std::time::Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(invalid("hook timed out"));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn valid_result(phase: Phase, original: &Value, result: &Value) -> bool {
