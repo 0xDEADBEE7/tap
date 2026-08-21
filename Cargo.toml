@@ -1,0 +1,12 @@
+[package]
+name = "tap"
+version = "0.1.0"
+edition = "2021"
+description = "Traffic Access Proxy"
+
+[dependencies]
+regex = "1"
+
+[[bin]]
+name = "tap"
+path = "src/main.rs"
