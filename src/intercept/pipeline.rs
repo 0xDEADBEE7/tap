@@ -96,10 +96,10 @@ impl HookRunner {
     fn transform(&self, phase: Phase, value: &mut Value) {
         let mut sync = self.hooks.iter().filter(|hook| hook.mode == Mode::Sync);
         for hook in sync.by_ref() {
-            if let Ok(output) = run(hook, value) {
-                if valid_result(phase, value, &output) {
-                    *value = output;
-                }
+            match run(hook, value) {
+                Ok(output) if valid_result(phase, value, &output) => *value = output,
+                Ok(_) => self.log_error(hook, &invalid("hook result failed validation")),
+                Err(error) => self.log_error(hook, &error),
             }
         }
         for hook in self.hooks.iter().filter(|hook| hook.mode == Mode::Async) {
