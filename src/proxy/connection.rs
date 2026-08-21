@@ -1,6 +1,6 @@
 use super::upstream;
 use crate::cli::Config;
-use crate::http::Response;
+use crate::http::{encode, parse};
 use crate::intercept::{FilterSet, HookRunner, HookSpec};
 use crate::output;
 use std::io::{self, Read, Write};
@@ -51,21 +51,13 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         if count == 0 {
             break;
         }
-        client.write_all(&chunk[..count])?;
         bytes.extend_from_slice(&chunk[..count]);
     }
-    let status = String::from_utf8_lossy(&bytes)
-        .split_whitespace()
-        .nth(1)
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    let mut response = Response {
-        status,
-        headers: Vec::new(),
-        body: bytes,
-    };
+    let response = parse(&bytes)?;
+    let mut response = response;
     hooks.response(&mut response, "request-id");
-    let _response_size = response.body.len() + response.headers.len();
+    let response_wire = encode(&response);
+    client.write_all(&response_wire)?;
     if filters.allows_response(response.status) {
         if config.json {
             output::json_response(

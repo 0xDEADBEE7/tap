@@ -1,5 +1,5 @@
 use crate::http::{Request, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
@@ -19,7 +19,7 @@ pub struct Hook {
     pub timeout: Duration,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HookSpec {
     pub mode: ModeSpec,
     pub command: Vec<String>,
@@ -27,7 +27,7 @@ pub struct HookSpec {
     pub timeout_ms: u64,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModeSpec {
     Sync,

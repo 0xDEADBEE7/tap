@@ -1,8 +1,31 @@
 use crate::cli::Config;
+use crate::intercept::HookSpec;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+struct Metadata {
+    id: String,
+    status: String,
+    port: String,
+    #[serde(default)]
+    filters: Vec<String>,
+    #[serde(default)]
+    hooks: HookConfig,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct HookConfig {
+    #[serde(default)]
+    pub on_request: Vec<HookSpec>,
+    #[serde(default)]
+    pub on_response: Vec<HookSpec>,
+    #[serde(default)]
+    pub on_event: Vec<HookSpec>,
+}
 
 pub fn create(port: String) -> io::Result<()> {
     port.parse::<u16>()
@@ -41,8 +64,11 @@ pub fn run(id: String) -> io::Result<()> {
     let metadata = read_metadata(&id)?;
     let result = crate::proxy::listener::run(Config {
         listen: format!("127.0.0.1:{}", metadata.port),
-        filters: Vec::new(),
-        hooks: Vec::new(),
+        filters: metadata.filters,
+        hooks: metadata.hooks.on_request.into_iter()
+            .chain(metadata.hooks.on_response)
+            .chain(metadata.hooks.on_event)
+            .collect(),
         json: false,
     });
     let _ = write_metadata(&id, "stopped", &metadata.port);
@@ -92,33 +118,20 @@ pub fn list() -> io::Result<()> {
     Ok(())
 }
 
-struct Metadata {
-    status: String,
-    port: String,
-}
-
 fn read_metadata(id: &str) -> io::Result<Metadata> {
-    let text = fs::read_to_string(session_dir(id).join("metadata.json"))?;
-    let status = field(&text, "status").ok_or_else(|| invalid("invalid metadata"))?;
-    let port = field(&text, "port").ok_or_else(|| invalid("invalid metadata"))?;
-    Ok(Metadata { status, port })
+    serde_json::from_str(&fs::read_to_string(session_dir(id).join("metadata.json"))?)
+        .map_err(|error| invalid(&format!("invalid metadata: {error}")))
 }
 
 fn write_metadata(id: &str, status: &str, port: &str) -> io::Result<()> {
-    fs::write(
-        session_dir(id).join("metadata.json"),
-        format!(r#"{{"id":"{id}","status":"{status}","port":{port}}}"#),
-    )
-}
-
-fn field(text: &str, name: &str) -> Option<String> {
-    let marker = format!(r#""{name}":"#);
-    let value = text.split_once(&marker)?.1;
-    if let Some(value) = value.strip_prefix('"') {
-        Some(value.split('"').next()?.to_string())
-    } else {
-        Some(value.split([',', '}']).next()?.trim().to_string())
-    }
+    let mut metadata = read_metadata(id).unwrap_or_else(|_| Metadata {
+        id: id.into(), status: status.into(), port: port.into(), filters: Vec::new(), hooks: HookConfig::default(),
+    });
+    metadata.status = status.into();
+    metadata.port = port.into();
+    let text = serde_json::to_string_pretty(&metadata)
+        .map_err(|error| invalid(&format!("cannot encode metadata: {error}")))?;
+    fs::write(session_dir(id).join("metadata.json"), text)
 }
 
 fn sessions_dir() -> PathBuf {
