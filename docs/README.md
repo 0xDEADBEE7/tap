@@ -30,9 +30,44 @@ Filters are regular expressions. A single `--filter` uses comma-separated AND co
 
 Supported fields are `method`, `scheme`, `host`, `port`, `path`, and `status`. Header keys are matched case-insensitively. `--host` and `--match` remain compatibility aliases for host and path filters.
 
-## Hooks
+## Current architecture
 
-The hook execution foundation accepts JSON on stdin and uses an argument array rather than a shell command. Synchronous hooks can return a replacement JSON object; invalid results preserve the original object. Asynchronous hooks observe the value and do not transform it. Session configuration and event persistence are still being integrated.
+```text
+request
+  → request filter
+  → sync on_request hooks
+  → async on_request observers
+  → upstream
+  → sync on_response hooks
+  → async on_response observers
+  → client
+  → event filter
+  → sync on_event hooks
+  → async on_event observers
+  → events.jsonl
+```
+
+Session metadata is stored under the platform configuration directory in `tap/sessions/<id>/metadata.json`. It can contain `filters` and phase-specific `hooks`:
+
+```json
+{
+  "filters": ["host=^api\\.example\\.com$"],
+  "hooks": {
+    "on_request": [{"mode": "sync", "command": ["rewrite-request"]}],
+    "on_response": [{"mode": "sync", "command": ["redact-response"]}],
+    "on_event": [{"mode": "async", "command": ["notify"]}]
+  }
+}
+```
+
+Hooks receive JSON on stdin. Commands are never run through a shell. Sync output must be a valid JSON object with immutable identity fields unchanged; failures are logged and the original value continues. Async hooks observe without changing traffic or persisted data and have stdout/stderr detached.
+
+## Limitations
+
+- HTTPS `CONNECT` is tunneled; TLS MITM is not yet integrated.
+- Hook concurrency is not yet globally bounded.
+- Hook timeout applies to synchronous hooks; asynchronous hooks are detached.
+- Event IDs are currently request-scoped placeholders and should be replaced with a connection event ID.
 
 ## Process management
 
