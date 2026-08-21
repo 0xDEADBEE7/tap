@@ -1,15 +1,15 @@
 use super::upstream;
 use crate::cli::Config;
 use crate::http::Response;
-use crate::intercept::{FilterSet, Pipeline};
+use crate::intercept::{FilterSet, HookRunner};
 use crate::output;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
 pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let mut request = crate::http::read(&mut client)?;
-    let pipeline = Pipeline::default();
-    pipeline.request(&mut request);
+    let hooks = HookRunner::new(Vec::new());
+    hooks.request(&mut request);
     let filters = FilterSet::from_specs(&config.filters)?;
     if !filters.allows_request(
         &request.method,
@@ -64,7 +64,7 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         headers: Vec::new(),
         body: bytes,
     };
-    pipeline.response(&mut response);
+    hooks.response(&mut response, "request-id");
     let _response_size = response.body.len() + response.headers.len();
     if filters.allows_response(response.status) {
         if config.json {
