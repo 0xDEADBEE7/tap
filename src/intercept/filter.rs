@@ -82,6 +82,21 @@ impl FilterSet {
         })
     }
 
+    pub fn allows_event(&self, method: &str, host: &str, path: &str, status: u16) -> bool {
+        self.filters.is_empty() || self.filters.iter().any(|filter| {
+            filter.conditions.iter().all(|condition| match condition {
+                Condition::Field { name, pattern } => match name {
+                    Field::Method => pattern.is_match(method),
+                    Field::Host => pattern.is_match(host),
+                    Field::Path => pattern.is_match(path),
+                    Field::Status => pattern.is_match(&status.to_string()),
+                    Field::Scheme | Field::Port => false,
+                },
+                Condition::Header { .. } => false,
+            })
+        })
+    }
+
     pub fn allows_response(&self, status: u16) -> bool {
         self.filters.is_empty() || self.filters.iter().any(|filter| {
             filter.conditions.iter().all(|condition| match condition {

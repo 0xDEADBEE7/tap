@@ -3,6 +3,8 @@ use crate::cli::Config;
 use crate::http::{encode, parse};
 use crate::intercept::{FilterSet, HookRunner, HookSpec};
 use crate::output;
+use serde_json::{json, Value};
+use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
@@ -59,24 +61,45 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     response_hooks.response(&mut response, "request-id");
     let response_wire = encode(&response);
     client.write_all(&response_wire)?;
-    if filters.allows_response(response.status) {
-        if config.json {
-            output::json_response(
-                &request.method,
-                &request.host,
-                &request.path,
-                response.status,
-            );
-        } else {
-            output::human_response(
-                &request.method,
-                &request.host,
-                &request.path,
-                response.status,
-            );
-        }
+    let event_hooks = HookRunner::new(config.on_event.clone().into_iter().map(HookSpec::into_hook).collect());
+    if filters.allows_event(&request.method, &request.host, &request.path, response.status) {
+        let mut event = json!({
+            "type": "response",
+            "id": "request-id",
+            "session_id": config.session_id,
+            "method": request.method,
+            "host": request.host,
+            "path": request.path,
+            "status": response.status
+        });
+        event_hooks.event(&mut event);
+        persist_event(config, &event)?;
+    }
+    if config.json {
+        output::json_response(
+            &request.method,
+            &request.host,
+            &request.path,
+            response.status,
+        );
+    } else {
+        output::human_response(
+            &request.method,
+            &request.host,
+            &request.path,
+            response.status,
+        );
     }
     Ok(())
+}
+
+fn persist_event(config: &Config, event: &Value) -> io::Result<()> {
+    let Some(path) = &config.events_path else {
+        return Ok(());
+    };
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    serde_json::to_writer(&mut file, event).map_err(|error| io::Error::other(error.to_string()))?;
+    file.write_all(b"\n")
 }
 
 fn upstream_failure(stream: &mut TcpStream, error: io::Error) -> io::Result<()> {
