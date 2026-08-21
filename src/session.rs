@@ -42,6 +42,7 @@ pub fn run(id: String) -> io::Result<()> {
     let result = crate::proxy::listener::run(Config {
         listen: format!("127.0.0.1:{}", metadata.port),
         filters: Vec::new(),
+        hooks: Vec::new(),
         json: false,
     });
     let _ = write_metadata(&id, "stopped", &metadata.port);

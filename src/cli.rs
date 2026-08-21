@@ -1,3 +1,4 @@
+use crate::intercept::HookSpec;
 use std::env;
 use std::io;
 
@@ -5,6 +6,7 @@ use std::io;
 pub struct Config {
     pub listen: String,
     pub filters: Vec<String>,
+    pub hooks: Vec<HookSpec>,
     pub json: bool,
 }
 
@@ -29,6 +31,7 @@ fn parse_proxy(mut args: impl Iterator<Item = String>) -> io::Result<Config> {
     let mut config = Config {
         listen: "127.0.0.1:8080".into(),
         filters: Vec::new(),
+        hooks: Vec::new(),
         json: false,
     };
     while let Some(arg) = args.next() {

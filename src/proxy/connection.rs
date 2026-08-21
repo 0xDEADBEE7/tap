@@ -1,14 +1,14 @@
 use super::upstream;
 use crate::cli::Config;
 use crate::http::Response;
-use crate::intercept::{FilterSet, HookRunner};
+use crate::intercept::{FilterSet, HookRunner, HookSpec};
 use crate::output;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
 pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let mut request = crate::http::read(&mut client)?;
-    let hooks = HookRunner::new(Vec::new());
+    let hooks = HookRunner::new(config.hooks.clone().into_iter().map(HookSpec::into_hook).collect());
     hooks.request(&mut request);
     let filters = FilterSet::from_specs(&config.filters)?;
     if !filters.allows_request(
