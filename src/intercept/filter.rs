@@ -82,17 +82,29 @@ impl FilterSet {
         })
     }
 
-    pub fn allows_event(&self, method: &str, host: &str, path: &str, status: u16) -> bool {
+    pub fn allows_event(
+        &self,
+        method: &str,
+        scheme: &str,
+        host: &str,
+        port: u16,
+        path: &str,
+        headers: &[(String, String)],
+        status: u16,
+    ) -> bool {
         self.filters.is_empty() || self.filters.iter().any(|filter| {
             filter.conditions.iter().all(|condition| match condition {
                 Condition::Field { name, pattern } => match name {
                     Field::Method => pattern.is_match(method),
+                    Field::Scheme => pattern.is_match(scheme),
                     Field::Host => pattern.is_match(host),
+                    Field::Port => pattern.is_match(&port.to_string()),
                     Field::Path => pattern.is_match(path),
                     Field::Status => pattern.is_match(&status.to_string()),
-                    Field::Scheme | Field::Port => false,
                 },
-                Condition::Header { .. } => false,
+                Condition::Header { key, value } => headers
+                    .iter()
+                    .any(|(header_key, header_value)| key.is_match(header_key) && value.is_match(header_value)),
             })
         })
     }

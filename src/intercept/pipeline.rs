@@ -191,15 +191,37 @@ fn valid_result(phase: Phase, original: &Value, result: &Value) -> bool {
     immutable.iter().all(|field| result.get(*field) == original.get(*field))
 }
 
+pub fn request_event_value(request: &Request) -> Value {
+    let mut value = request_value(request);
+    value.as_object_mut().unwrap().remove("type");
+    value
+}
+
+pub fn response_event_value(response: &Response) -> Value {
+    let mut value = response_value(response, "");
+    let object = value.as_object_mut().unwrap();
+    object.remove("type");
+    object.remove("request_id");
+    value
+}
+
+fn headers_value(headers: &[(String, String)]) -> Value {
+    let mut object = serde_json::Map::new();
+    for (key, value) in headers {
+        object.insert(key.clone(), Value::String(value.clone()));
+    }
+    Value::Object(object)
+}
+
 fn request_value(request: &Request) -> Value {
     json!({"type":"request", "method":request.method, "scheme":request.scheme,
         "host":request.host, "port":request.port, "path":request.path,
-        "headers":request.headers, "body":String::from_utf8_lossy(&request.body)})
+        "headers":headers_value(&request.headers), "body":String::from_utf8_lossy(&request.body)})
 }
 
 fn response_value(response: &Response, request_id: &str) -> Value {
     json!({"type":"response", "request_id":request_id, "status":response.status,
-        "headers":response.headers, "body":String::from_utf8_lossy(&response.body)})
+        "headers":headers_value(&response.headers), "body":String::from_utf8_lossy(&response.body)})
 }
 
 fn request_from_value(value: Value) -> Option<Request> {
@@ -223,6 +245,12 @@ fn response_from_value(value: Value) -> Option<Response> {
 }
 
 fn pairs(value: &Value) -> Option<Vec<(String, String)>> {
+    if let Some(object) = value.as_object() {
+        return object
+            .iter()
+            .map(|(key, value)| Some((key.clone(), value.as_str()?.into())))
+            .collect();
+    }
     value.as_array()?.iter().map(|pair| {
         let pair = pair.as_array()?;
         Some((pair.first()?.as_str()?.into(), pair.get(1)?.as_str()?.into()))

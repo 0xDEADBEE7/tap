@@ -1,12 +1,16 @@
 use super::upstream;
 use crate::cli::Config;
 use crate::http::{encode, parse};
-use crate::intercept::{FilterSet, HookRunner, HookSpec};
+use crate::intercept::{
+    request_event_value, response_event_value, FilterSet, HookRunner, HookSpec,
+};
 use crate::output;
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let mut request = crate::http::read(&mut client)?;
@@ -17,16 +21,35 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let hooks = HookRunner::with_log(config.on_request.clone().into_iter().map(HookSpec::into_hook).collect(), log_path.clone());
     hooks.request(&mut request);
     let filters = FilterSet::from_specs(&config.filters)?;
-    if !filters.allows_request(
+    let request_matches = filters.allows_request(
         &request.method,
         &request.scheme,
         &request.host,
         request.port,
         &request.path,
         &request.headers,
-    ) {
+    );
+    if !request_matches {
         return reject(&mut client);
     }
+    let request_id = request_id();
+    if config.json {
+        output::json_request(&request.method, &request.host, &request.path);
+    } else {
+        output::human_request(&request.method, &request.host, &request.path);
+    }
+    let event_hooks = HookRunner::with_log(
+        config.on_event.clone().into_iter().map(HookSpec::into_hook).collect(),
+        log_path.clone(),
+    );
+    let mut request_event = json!({
+        "type": "request",
+        "id": request_id.clone(),
+        "session_id": config.session_id,
+        "request": request_event_value(&request),
+    });
+    event_hooks.event(&mut request_event);
+    persist_event(config, &request_event)?;
     if request.method.eq_ignore_ascii_case("CONNECT") {
         let server = match upstream::connect(&request.host, request.port) {
             Ok(server) => server,
@@ -62,19 +85,23 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let response_hooks = HookRunner::with_log(config.on_response.clone().into_iter().map(HookSpec::into_hook).collect(), log_path.clone());
     let response = parse(&bytes)?;
     let mut response = response;
-    response_hooks.response(&mut response, "request-id");
+    response_hooks.response(&mut response, &request_id);
     let response_wire = encode(&response);
     client.write_all(&response_wire)?;
-    let event_hooks = HookRunner::with_log(config.on_event.clone().into_iter().map(HookSpec::into_hook).collect(), log_path);
-    if filters.allows_event(&request.method, &request.host, &request.path, response.status) {
+    if filters.allows_event(
+        &request.method,
+        &request.scheme,
+        &request.host,
+        request.port,
+        &request.path,
+        &request.headers,
+        response.status,
+    ) {
         let mut event = json!({
             "type": "response",
-            "id": "request-id",
+            "id": request_id,
             "session_id": config.session_id,
-            "method": request.method,
-            "host": request.host,
-            "path": request.path,
-            "status": response.status
+            "response": response_event_value(&response),
         });
         event_hooks.event(&mut event);
         persist_event(config, &event)?;
@@ -95,6 +122,16 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         );
     }
     Ok(())
+}
+
+fn request_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{timestamp:016x}-{sequence:016x}")
 }
 
 fn session_log_path(id: &str) -> std::path::PathBuf {

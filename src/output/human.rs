@@ -1,3 +1,7 @@
+pub fn request(method: &str, host: &str, path: &str) {
+    println!("SEND {method} {host}{path}");
+}
+
 pub fn response(method: &str, host: &str, path: &str, status: u16) {
-    println!("← {status} {host}{path} ({method})");
+    println!("RECV {status} {host}{path} ({method})");
 }

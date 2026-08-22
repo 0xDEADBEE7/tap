@@ -3,6 +3,7 @@ use crate::intercept::HookSpec;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -10,7 +11,11 @@ use std::process::{Command, Stdio};
 struct Metadata {
     id: String,
     status: String,
+    #[serde(default)]
+    label: String,
     port: String,
+    #[serde(default)]
+    pid: Option<u32>,
     #[serde(default)]
     filters: Vec<String>,
     #[serde(default)]
@@ -30,7 +35,7 @@ pub struct HookConfig {
 pub fn create(port: String) -> io::Result<()> {
     port.parse::<u16>()
         .map_err(|_| invalid("port must be a number"))?;
-    let id = unique_id();
+    let id = unique_id()?;
     let directory = session_dir(&id);
     fs::create_dir_all(&directory)?;
     fs::File::create(directory.join("tap.log"))?;
@@ -48,14 +53,18 @@ pub fn start(id: String) -> io::Result<()> {
     let executable = std::env::current_exe()?;
     let log = fs::OpenOptions::new()
         .create(true)
-        .append(true)
+        .truncate(true)
+        .write(true)
         .open(session_dir(&id).join("tap.log"))?;
-    Command::new(executable)
+    let child = Command::new(executable)
         .args(["__run", &id])
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log))
         .spawn()?;
-    write_metadata(&id, "running", &metadata.port)?;
+    let mut metadata = metadata;
+    metadata.status = "running".into();
+    metadata.pid = Some(child.id());
+    write_metadata_value(&id, &metadata)?;
     println!(r#"{{"id":"{id}","status":"running"}}"#);
     Ok(())
 }
@@ -81,42 +90,117 @@ pub fn stop(id: String) -> io::Result<()> {
     if metadata.status == "stopped" {
         return Ok(());
     }
-    let output = Command::new("ps")
-        .args(["-ax", "-o", "pid=", "-o", "command="])
-        .output()?;
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Some((pid, command)) = line.trim_start().split_once(char::is_whitespace) else {
-            continue;
-        };
-        if command.contains("tap __run ") && command.ends_with(&id) {
-            unsafe {
-                libc_kill(pid.trim().parse().unwrap_or(0));
-            }
-            write_metadata(&id, "stopped", &metadata.port)?;
-            println!(r#"{{"id":"{id}","status":"stopped"}}"#);
-            return Ok(());
+    let pid = metadata
+        .pid
+        .ok_or_else(|| invalid("running session has no process ID"))?;
+    let status = unsafe { libc_kill(pid as i32) };
+    if status != 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::NotFound {
+            return Err(error);
         }
     }
-    write_metadata(&id, "stopped", &metadata.port)
+    write_metadata(&id, "stopped", &metadata.port)?;
+    println!(r#"{{"id":"{id}","status":"stopped"}}"#);
+    Ok(())
 }
 
-pub fn list() -> io::Result<()> {
-    let mut ids = Vec::new();
+pub fn list(table: bool) -> io::Result<()> {
+    let mut sessions = Vec::new();
     if let Ok(entries) = fs::read_dir(sessions_dir()) {
         for entry in entries.flatten() {
             if entry.path().is_dir() {
-                ids.push(entry.file_name().to_string_lossy().into_owned());
+                if let Ok(metadata) = read_metadata(&entry.file_name().to_string_lossy()) {
+                    sessions.push(metadata);
+                }
             }
         }
     }
-    println!(
-        r#"{{"sessions":[{}]}}"#,
-        ids.iter()
-            .map(|id| format!(r#""{id}""#))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
+
+    if table {
+        print_table(&sessions);
+    } else {
+        let sessions = sessions
+            .iter()
+            .map(|metadata| {
+                serde_json::json!({
+                    "id": metadata.id,
+                    "status": metadata.status,
+                    "label": metadata.label,
+                    "port": metadata.port,
+                })
+            })
+            .collect::<Vec<_>>();
+        println!("{}", serde_json::json!({"sessions": sessions}));
+    }
     Ok(())
+}
+
+fn print_table(sessions: &[Metadata]) {
+    const STATUS_WIDTH: usize = 6;
+    const PORT_WIDTH: usize = 4;
+    const ID_HEADER_WIDTH: usize = 2;
+    const LABEL_HEADER_WIDTH: usize = 5;
+    let status_width = sessions
+        .iter()
+        .map(|metadata| metadata.status.chars().count())
+        .max()
+        .unwrap_or(STATUS_WIDTH)
+        .max(STATUS_WIDTH);
+    let label_width = sessions
+        .iter()
+        .map(|metadata| metadata.label.chars().count())
+        .max()
+        .unwrap_or(LABEL_HEADER_WIDTH)
+        .max(LABEL_HEADER_WIDTH);
+    let port_width = sessions
+        .iter()
+        .map(|metadata| metadata.port.chars().count())
+        .max()
+        .unwrap_or(PORT_WIDTH)
+        .max(PORT_WIDTH);
+    let id_width = sessions
+        .iter()
+        .map(|metadata| metadata.id.chars().count())
+        .max()
+        .unwrap_or(ID_HEADER_WIDTH)
+        .max(ID_HEADER_WIDTH);
+    let widths = [status_width, label_width, port_width, id_width];
+    let border = table_line('┌', '┬', '┐', '─', &widths);
+    let divider = table_line('├', '┼', '┤', '─', &widths);
+    let bottom = table_line('└', '┴', '┘', '─', &widths);
+
+    println!("{border}");
+    println!(
+        "│ {:<status_width$} │ {:<label_width$} │ {:<port_width$} │ {:<id_width$} │",
+        "STATUS", "LABEL", "PORT", "ID"
+    );
+    println!("{divider}");
+    for metadata in sessions {
+        println!(
+            "│ {:<status_width$} │ {:<label_width$} │ {:<port_width$} │ {:<id_width$} │",
+            metadata.status.to_uppercase(),
+            metadata.label,
+            metadata.port,
+            metadata.id
+        );
+    }
+    println!("{bottom}");
+}
+
+fn table_line(left: char, middle: char, right: char, fill: char, widths: &[usize; 4]) -> String {
+    format!(
+        "{}{}{}{}{}{}{}{}{}",
+        left,
+        fill.to_string().repeat(widths[0] + 2),
+        middle,
+        fill.to_string().repeat(widths[1] + 2),
+        middle,
+        fill.to_string().repeat(widths[2] + 2),
+        middle,
+        fill.to_string().repeat(widths[3] + 2),
+        right
+    )
 }
 
 fn read_metadata(id: &str) -> io::Result<Metadata> {
@@ -126,11 +210,22 @@ fn read_metadata(id: &str) -> io::Result<Metadata> {
 
 fn write_metadata(id: &str, status: &str, port: &str) -> io::Result<()> {
     let mut metadata = read_metadata(id).unwrap_or_else(|_| Metadata {
-        id: id.into(), status: status.into(), port: port.into(), filters: Vec::new(), hooks: HookConfig::default(),
+        id: id.into(),
+        status: status.into(),
+        label: String::new(),
+        port: port.into(),
+        pid: None,
+        filters: Vec::new(),
+        hooks: HookConfig::default(),
     });
     metadata.status = status.into();
     metadata.port = port.into();
-    let text = serde_json::to_string_pretty(&metadata)
+    metadata.pid = if status == "running" { metadata.pid } else { None };
+    write_metadata_value(id, &metadata)
+}
+
+fn write_metadata_value(id: &str, metadata: &Metadata) -> io::Result<()> {
+    let text = serde_json::to_string_pretty(metadata)
         .map_err(|error| invalid(&format!("cannot encode metadata: {error}")))?;
     fs::write(session_dir(id).join("metadata.json"), text)
 }
@@ -149,14 +244,10 @@ fn sessions_dir() -> PathBuf {
 fn session_dir(id: &str) -> PathBuf {
     sessions_dir().join(id)
 }
-fn unique_id() -> String {
-    format!("{:016x}", std::process::id() as u64 ^ current_nanos())
-}
-fn current_nanos() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64
+fn unique_id() -> io::Result<String> {
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 unsafe fn libc_kill(pid: i32) -> i32 {
     extern "C" {
