@@ -24,7 +24,11 @@ pub fn parse(bytes: &[u8]) -> io::Result<Response> {
         .filter_map(|line| line.split_once(':'))
         .map(|(key, value)| (key.trim().into(), value.trim().into()))
         .collect();
-    Ok(Response { status, headers, body: bytes[end + 4..].to_vec() })
+    Ok(Response {
+        status,
+        headers,
+        body: bytes[end + 4..].to_vec(),
+    })
 }
 
 pub fn encode(response: &Response) -> Vec<u8> {
@@ -32,7 +36,13 @@ pub fn encode(response: &Response) -> Vec<u8> {
     for (key, value) in &response.headers {
         wire.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
-    wire.extend_from_slice(format!("Content-Length: {}\r\nConnection: close\r\n\r\n", response.body.len()).as_bytes());
+    wire.extend_from_slice(
+        format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+            response.body.len()
+        )
+        .as_bytes(),
+    );
     wire.extend_from_slice(&response.body);
     wire
 }

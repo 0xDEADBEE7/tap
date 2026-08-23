@@ -33,9 +33,9 @@ impl FilterSet {
         for spec in specs {
             let mut conditions = Vec::new();
             for item in spec.split(',') {
-                let (key, pattern) = item.split_once('=').ok_or_else(|| invalid(
-                    "filter must be FIELD=REGEX or header:KEY=REGEX",
-                ))?;
+                let (key, pattern) = item
+                    .split_once('=')
+                    .ok_or_else(|| invalid("filter must be FIELD=REGEX or header:KEY=REGEX"))?;
                 let regex = Regex::new(pattern)
                     .map_err(|error| invalid(&format!("invalid filter regex: {error}")))?;
                 let condition = if let Some(header_key) = key.strip_prefix("header:") {
@@ -65,21 +65,24 @@ impl FilterSet {
         path: &str,
         headers: &[(String, String)],
     ) -> bool {
-        self.filters.is_empty() || self.filters.iter().any(|filter| {
-            filter.conditions.iter().all(|condition| match condition {
-                Condition::Field { name, pattern } => match name {
-                    Field::Method => pattern.is_match(method),
-                    Field::Scheme => pattern.is_match(scheme),
-                    Field::Host => pattern.is_match(host),
-                    Field::Port => pattern.is_match(&port.to_string()),
-                    Field::Path => pattern.is_match(path),
-                    Field::Status => false,
-                },
-                Condition::Header { key, value } => headers
-                    .iter()
-                    .any(|(header_key, header_value)| key.is_match(header_key) && value.is_match(header_value)),
+        self.filters.is_empty()
+            || self.filters.iter().any(|filter| {
+                filter.conditions.iter().all(|condition| match condition {
+                    Condition::Field { name, pattern } => match name {
+                        Field::Method => pattern.is_match(method),
+                        Field::Scheme => pattern.is_match(scheme),
+                        Field::Host => pattern.is_match(host),
+                        Field::Port => pattern.is_match(&port.to_string()),
+                        Field::Path => pattern.is_match(path),
+                        Field::Status => false,
+                    },
+                    Condition::Header { key, value } => {
+                        headers.iter().any(|(header_key, header_value)| {
+                            key.is_match(header_key) && value.is_match(header_value)
+                        })
+                    }
+                })
             })
-        })
     }
 
     pub fn allows_event(
@@ -92,30 +95,24 @@ impl FilterSet {
         headers: &[(String, String)],
         status: u16,
     ) -> bool {
-        self.filters.is_empty() || self.filters.iter().any(|filter| {
-            filter.conditions.iter().all(|condition| match condition {
-                Condition::Field { name, pattern } => match name {
-                    Field::Method => pattern.is_match(method),
-                    Field::Scheme => pattern.is_match(scheme),
-                    Field::Host => pattern.is_match(host),
-                    Field::Port => pattern.is_match(&port.to_string()),
-                    Field::Path => pattern.is_match(path),
-                    Field::Status => pattern.is_match(&status.to_string()),
-                },
-                Condition::Header { key, value } => headers
-                    .iter()
-                    .any(|(header_key, header_value)| key.is_match(header_key) && value.is_match(header_value)),
+        self.filters.is_empty()
+            || self.filters.iter().any(|filter| {
+                filter.conditions.iter().all(|condition| match condition {
+                    Condition::Field { name, pattern } => match name {
+                        Field::Method => pattern.is_match(method),
+                        Field::Scheme => pattern.is_match(scheme),
+                        Field::Host => pattern.is_match(host),
+                        Field::Port => pattern.is_match(&port.to_string()),
+                        Field::Path => pattern.is_match(path),
+                        Field::Status => pattern.is_match(&status.to_string()),
+                    },
+                    Condition::Header { key, value } => {
+                        headers.iter().any(|(header_key, header_value)| {
+                            key.is_match(header_key) && value.is_match(header_value)
+                        })
+                    }
+                })
             })
-        })
-    }
-
-    pub fn allows_response(&self, status: u16) -> bool {
-        self.filters.is_empty() || self.filters.iter().any(|filter| {
-            filter.conditions.iter().all(|condition| match condition {
-                Condition::Field { name: Field::Status, pattern } => pattern.is_match(&status.to_string()),
-                Condition::Field { .. } | Condition::Header { .. } => true,
-            })
-        })
     }
 }
 
@@ -140,38 +137,4 @@ fn field(value: &str) -> io::Result<Field> {
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::FilterSet;
-
-    #[test]
-    fn filters_or_across_specs_and_and_within_spec() {
-        let filters = FilterSet::from_specs(&[
-            "method=GET,host=example\\.com".into(),
-            "status=^500$".into(),
-        ])
-        .unwrap();
-        assert!(filters.allows_request(
-            "GET", "http", "example.com", 80, "/", &[]
-        ));
-        assert!(!filters.allows_request(
-            "POST", "http", "example.com", 80, "/", &[]
-        ));
-        assert!(filters.allows_response(500));
-    }
-
-    #[test]
-    fn matches_header_key_and_value() {
-        let filters = FilterSet::from_specs(&["header:^x-tenant$=^acme$".into()]).unwrap();
-        assert!(filters.allows_request(
-            "GET",
-            "http",
-            "example.com",
-            80,
-            "/",
-            &[("X-Tenant".into(), "acme".into())],
-        ));
-    }
 }

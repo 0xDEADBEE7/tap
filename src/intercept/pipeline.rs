@@ -1,8 +1,8 @@
 use crate::http::{Request, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{self, Write};
 use std::fs::OpenOptions;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -65,10 +65,6 @@ pub struct HookRunner {
 }
 
 impl HookRunner {
-    pub fn new(hooks: Vec<Hook>) -> Self {
-        Self { hooks, log_path: None }
-    }
-
     pub fn with_log(hooks: Vec<Hook>, log_path: Option<PathBuf>) -> Self {
         Self { hooks, log_path }
     }
@@ -125,7 +121,8 @@ fn spawn_async(hook: &Hook, value: &Value, log_path: Option<PathBuf>) {
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn() else {
+        .spawn()
+    else {
         return;
     };
     if let Some(mut stdin) = child.stdin.take() {
@@ -164,7 +161,10 @@ fn run(hook: &Hook, value: &Value) -> io::Result<Value> {
     serde_json::from_slice(&output.stdout).map_err(|_| invalid("hook stdout was not JSON"))
 }
 
-fn wait_for_output(mut child: std::process::Child, timeout: Duration) -> io::Result<std::process::Output> {
+fn wait_for_output(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> io::Result<std::process::Output> {
     let started = std::time::Instant::now();
     loop {
         if child.try_wait()?.is_some() {
@@ -188,7 +188,9 @@ fn valid_result(phase: Phase, original: &Value, result: &Value) -> bool {
         Phase::Response => &["type", "request_id", "status"][..],
         Phase::Event => &["type", "id", "session_id"][..],
     };
-    immutable.iter().all(|field| result.get(*field) == original.get(*field))
+    immutable
+        .iter()
+        .all(|field| result.get(*field) == original.get(*field))
 }
 
 pub fn request_event_value(request: &Request) -> Value {
@@ -251,10 +253,17 @@ fn pairs(value: &Value) -> Option<Vec<(String, String)>> {
             .map(|(key, value)| Some((key.clone(), value.as_str()?.into())))
             .collect();
     }
-    value.as_array()?.iter().map(|pair| {
-        let pair = pair.as_array()?;
-        Some((pair.first()?.as_str()?.into(), pair.get(1)?.as_str()?.into()))
-    }).collect()
+    value
+        .as_array()?
+        .iter()
+        .map(|pair| {
+            let pair = pair.as_array()?;
+            Some((
+                pair.first()?.as_str()?.into(),
+                pair.get(1)?.as_str()?.into(),
+            ))
+        })
+        .collect()
 }
 
 fn invalid(message: &str) -> io::Error {

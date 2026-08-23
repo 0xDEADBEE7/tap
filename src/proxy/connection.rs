@@ -14,11 +14,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
     let mut request = crate::http::read(&mut client)?;
-    let log_path = config
-        .session_id
-        .as_ref()
-        .map(|id| session_log_path(id));
-    let hooks = HookRunner::with_log(config.on_request.clone().into_iter().map(HookSpec::into_hook).collect(), log_path.clone());
+    let log_path = config.session_id.as_ref().map(|id| session_log_path(id));
+    let hooks = HookRunner::with_log(
+        config
+            .on_request
+            .clone()
+            .into_iter()
+            .map(HookSpec::into_hook)
+            .collect(),
+        log_path.clone(),
+    );
     hooks.request(&mut request);
     let filters = FilterSet::from_specs(&config.filters)?;
     let request_matches = filters.allows_request(
@@ -39,7 +44,12 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         output::human_request(&request.method, &request.host, &request.path);
     }
     let event_hooks = HookRunner::with_log(
-        config.on_event.clone().into_iter().map(HookSpec::into_hook).collect(),
+        config
+            .on_event
+            .clone()
+            .into_iter()
+            .map(HookSpec::into_hook)
+            .collect(),
         log_path.clone(),
     );
     let mut request_event = json!({
@@ -82,7 +92,15 @@ pub fn handle(mut client: TcpStream, config: &Config) -> io::Result<()> {
         }
         bytes.extend_from_slice(&chunk[..count]);
     }
-    let response_hooks = HookRunner::with_log(config.on_response.clone().into_iter().map(HookSpec::into_hook).collect(), log_path.clone());
+    let response_hooks = HookRunner::with_log(
+        config
+            .on_response
+            .clone()
+            .into_iter()
+            .map(HookSpec::into_hook)
+            .collect(),
+        log_path.clone(),
+    );
     let response = parse(&bytes)?;
     let mut response = response;
     response_hooks.response(&mut response, &request_id);
@@ -137,7 +155,9 @@ fn request_id() -> String {
 fn session_log_path(id: &str) -> std::path::PathBuf {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config")))
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
+        })
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("tap/sessions")
         .join(id)

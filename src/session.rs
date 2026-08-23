@@ -220,7 +220,11 @@ fn write_metadata(id: &str, status: &str, port: &str) -> io::Result<()> {
     });
     metadata.status = status.into();
     metadata.port = port.into();
-    metadata.pid = if status == "running" { metadata.pid } else { None };
+    metadata.pid = if status == "running" {
+        metadata.pid
+    } else {
+        None
+    };
     write_metadata_value(id, &metadata)
 }
 
