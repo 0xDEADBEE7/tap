@@ -1,8 +1,10 @@
+pub mod capture;
 pub mod cli;
-pub mod http;
-pub mod intercept;
-pub mod output;
-pub mod process;
+pub mod filter;
+pub mod hooks;
+pub mod paths;
 pub mod proxy;
+pub mod record;
 pub mod session;
 pub mod tls;
+pub mod view;
